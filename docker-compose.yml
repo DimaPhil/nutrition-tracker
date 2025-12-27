@@ -1,0 +1,42 @@
+services:
+  app:
+    build:
+      context: .
+      target: production
+    image: nutrition-tracker:latest
+    container_name: nutrition-tracker
+
+  dev:
+    build:
+      context: .
+      target: development
+    image: nutrition-tracker:dev
+    container_name: nutrition-tracker-dev
+    volumes:
+      - .:/app
+      - /app/.venv  # Exclude virtualenv from bind mount
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+
+  test:
+    build:
+      context: .
+      target: development
+    image: nutrition-tracker:dev
+    container_name: nutrition-tracker-test
+    command: pytest --cov --cov-report=term-missing
+    volumes:
+      - .:/app
+      - /app/.venv
+
+  lint:
+    build:
+      context: .
+      target: development
+    image: nutrition-tracker:dev
+    container_name: nutrition-tracker-lint
+    command: ruff check src tests
+    volumes:
+      - .:/app
+      - /app/.venv
