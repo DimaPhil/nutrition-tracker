@@ -197,6 +197,9 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Vercel
+.vercel/
+
 # PyPI configuration file
 .pypirc
 

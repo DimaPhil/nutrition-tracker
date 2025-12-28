@@ -179,6 +179,45 @@ https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-domain>/telegram/webhook
 ```
 
+## Deploy to Vercel (CD)
+
+This repo is Vercel-ready with a serverless Python entrypoint.
+
+### 1) Connect the repo
+
+- Create a new Vercel project and import this repository.
+- Vercel will detect `api/index.py` and use the Python runtime automatically.
+
+### 2) Set environment variables
+
+In Vercel → **Project Settings → Environment Variables**, set:
+
+- `TELEGRAM_BOT_TOKEN`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_KEY`
+- `ADMIN_TOKEN`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `OPENAI_REASONING_EFFORT`
+- `OPENAI_STORE`
+- `FDC_API_KEY`
+- `FDC_BASE_URL`
+
+### 3) Deploy
+
+Just push to `main`. Vercel builds and deploys automatically.
+
+### 4) Set Telegram webhook to Vercel
+
+```
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-vercel-domain>/telegram/webhook
+```
+
+### Notes
+
+- Serverless entrypoint: `api/index.py`
+- Vercel uses `requirements.txt` for dependencies.
+
 ## Admin UI
 
 Open:
