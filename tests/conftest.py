@@ -1,5 +1,14 @@
 """Shared test fixtures."""
 
+import os
+
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
+os.environ.setdefault("SUPABASE_URL", "http://localhost")
+os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-key")
+os.environ.setdefault("ADMIN_TOKEN", "test-admin")
+os.environ.setdefault("OPENAI_API_KEY", "test-openai")
+os.environ.setdefault("FDC_API_KEY", "test-fdc")
+
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
