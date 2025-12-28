@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from nutrition_tracker.api.admin import router as admin_router
 from nutrition_tracker.api.telegram_models import TelegramPhotoSize, TelegramUpdate
 from nutrition_tracker.app_logging import configure_logging
+from nutrition_tracker.config import parse_allowed_user_ids
 from nutrition_tracker.containers import AppContainer
 from nutrition_tracker.domain.library import LibraryFood
 from nutrition_tracker.domain.meals import MealLogDetail, MealLogSummary
@@ -23,6 +24,9 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
     """Create a FastAPI app configured with dependencies."""
     configure_logging()
     logger = logging.getLogger(__name__)
+    allowed_user_ids = parse_allowed_user_ids(
+        container.settings.telegram_allowed_user_ids
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -54,6 +58,20 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
     ) -> dict[str, str]:
         """Handle Telegram webhook updates."""
         state_container: AppContainer = request.app.state.container
+        user_id = _extract_user_id(update)
+        if user_id is not None and not _is_user_allowed(user_id, allowed_user_ids):
+            if update.callback_query:
+                await state_container.telegram_client.answer_callback_query(
+                    update.callback_query.id,
+                    text="Not authorized.",
+                )
+                return {"status": "ok"}
+            if update.message:
+                await state_container.telegram_client.send_message(
+                    chat_id=update.message.chat.id,
+                    text="This bot is private.",
+                )
+                return {"status": "ok"}
         if update.callback_query:
             callback = update.callback_query
             await state_container.telegram_client.answer_callback_query(callback.id)
@@ -344,6 +362,20 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
 def _select_largest_photo(photos: list[TelegramPhotoSize]) -> TelegramPhotoSize:
     """Select the largest photo size from the Telegram payload."""
     return max(photos, key=lambda photo: (photo.width * photo.height))
+
+
+def _extract_user_id(update: TelegramUpdate) -> int | None:
+    """Extract Telegram user id from update, if present."""
+    if update.callback_query:
+        return update.callback_query.from_user.id
+    if update.message:
+        return update.message.from_user.id
+    return None
+
+
+def _is_user_allowed(user_id: int, allowed: set[int] | None) -> bool:
+    """Return true when the user is allowed to interact with the bot."""
+    return allowed is None or user_id in allowed
 
 
 def _format_photo_error(

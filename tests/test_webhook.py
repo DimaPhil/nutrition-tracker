@@ -413,3 +413,31 @@ def test_webhook_week_command_returns_daily_totals(
     response = client.post("/telegram/webhook", json=payload)
     assert response.status_code == 200
     assert "daily totals" in telegram_client.messages[-1][1].lower()
+
+
+def test_webhook_blocks_unknown_user(
+    container,
+    user_repository: InMemoryUserRepository,
+    telegram_client: FakeTelegramClient,
+) -> None:
+    container.settings.telegram_allowed_user_ids = "999"
+    app = create_app(container)
+    client = TestClient(app)
+
+    payload = {
+        "update_id": 77,
+        "message": {
+            "message_id": 10,
+            "date": 1700000000,
+            "chat": {"id": 99, "type": "private"},
+            "from": {"id": 123, "is_bot": False, "first_name": "Test"},
+            "text": "/start",
+        },
+    }
+
+    response = client.post("/telegram/webhook", json=payload)
+
+    assert response.status_code == 200
+    assert 123 not in user_repository.users
+    assert telegram_client.messages
+    assert telegram_client.messages[0][1] == "This bot is private."

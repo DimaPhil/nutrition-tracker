@@ -124,6 +124,7 @@ ENVIRONMENT=production uvicorn nutrition_tracker.api.asgi:app
 Notes:
 - `OPENAI_STORE=false` ensures model responses are not stored by OpenAI.
 - Photos are never stored in Supabase or on disk.
+- `TELEGRAM_ALLOWED_USER_IDS` controls who can use the bot (`*` or empty = everyone, comma-separated IDs = allowlist).
 
 ### 5) Install and run locally
 
