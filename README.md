@@ -217,6 +217,7 @@ https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-ve
 
 - Serverless entrypoint: `api/index.py`
 - Vercel uses `requirements.txt` for dependencies.
+- Vercel’s Python runtime is **3.12**, so the project targets `>=3.12`.
 
 ## Admin UI
 
