@@ -1,5 +1,6 @@
 """Session state machine for photo-based logging and edits."""
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
@@ -32,6 +33,8 @@ STATUS_EDIT_ENTER_GRAMS = "EDIT_ENTER_GRAMS"
 STATUS_CANCELLED = "CANCELLED"
 STATUS_COMPLETED = "COMPLETED"
 MACRO_PARTS = 4
+
+_logger = logging.getLogger(__name__)
 
 
 class PhotoRepository(Protocol):
@@ -93,6 +96,7 @@ class SessionService:
     nutrition_service: NutritionService
     meal_log_service: MealLogService
     audit_service: AuditService
+    debug: bool = False
 
     async def start_session(  # noqa: PLR0913
         self,
@@ -124,6 +128,12 @@ class SessionService:
             status=STATUS_AWAITING_CONFIRMATION,
             context=context,
         )
+        if self.debug:
+            _logger.info(
+                "Session started: user=%s items=%s",
+                user_id,
+                len(vision_items or []),
+            )
         prompt = SessionPrompt(
             text=_build_initial_prompt(vision_items),
             reply_markup=_inline_keyboard(
@@ -496,7 +506,7 @@ class SessionService:
             reply_markup=_inline_keyboard(buttons),
         )
 
-    async def _apply_candidate_selection(
+    async def _apply_candidate_selection(  # noqa: PLR0911
         self, session_id: UUID, context: dict[str, object], index: int
     ) -> SessionPrompt | None:
         options = context.get("candidate_options", [])
@@ -506,6 +516,12 @@ class SessionService:
         if not isinstance(option, dict):
             return None
         option_type = str(option.get("type", ""))
+        if self.debug:
+            _logger.info(
+                "Candidate selected: type=%s label=%s",
+                option_type,
+                option.get("label"),
+            )
         if option_type == "manual":
             return self._set_manual_target(session_id, context)
         if option_type == "library":
@@ -517,7 +533,19 @@ class SessionService:
         if option_type == "fdc":
             fdc_id = option.get("fdc_id")
             if isinstance(fdc_id, int):
-                details = await self.nutrition_service.get_food(fdc_id)
+                try:
+                    details = await self.nutrition_service.get_food(fdc_id)
+                except Exception:
+                    _logger.exception("FDC get failed: fdc_id=%s", fdc_id)
+                    prompt = self._prompt_item_selection(session_id, context)
+                    return SessionPrompt(
+                        text=(
+                            "USDA lookup timed out. "
+                            "Please choose another option or try again.\n\n"
+                            f"{prompt.text}"
+                        ),
+                        reply_markup=prompt.reply_markup,
+                    )
                 option = dict(option)
                 option.update(
                     {
@@ -607,6 +635,13 @@ class SessionService:
             "fat_g": macros[2],
             "carbs_g": macros[3],
         }
+        if self.debug:
+            _logger.info(
+                "Manual entry: name=%s basis=%s calories=%s",
+                name,
+                basis,
+                macros[0],
+            )
         if manual.get("target") == "library":
             self.library_service.create_manual_food(
                 user_id=_require_user_id(context),
@@ -663,6 +698,12 @@ class SessionService:
         resolved_items = _build_resolved_items(context)
         context["resolved_items"] = resolved_items
         summary = await self.meal_log_service.compute_summary(resolved_items)
+        if self.debug:
+            _logger.info(
+                "Session summary: items=%s calories=%s",
+                len(summary.items),
+                summary.total_calories,
+            )
         self.session_repository.update_session(
             session_id, status=STATUS_AWAITING_SAVE, context=context
         )
@@ -682,7 +723,18 @@ class SessionService:
         label = _item_label(item)
         user_id = _require_user_id(context)
         library = self.library_service.search(user_id, label, limit=3)
-        fdc = await self.nutrition_service.search(label, limit=3)
+        try:
+            fdc = await self.nutrition_service.search(label, limit=3)
+        except Exception:
+            _logger.exception("FDC search failed: label=%s", label)
+            fdc = []
+        if self.debug:
+            _logger.info(
+                "Candidate options: label=%s library=%s fdc=%s",
+                label,
+                len(library),
+                len(fdc),
+            )
         context["candidate_options"] = _build_candidate_options(library, fdc)
 
 

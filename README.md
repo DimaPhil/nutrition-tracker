@@ -66,14 +66,24 @@ psql "<YOUR_SUPABASE_CONNECTION_STRING>" -f supabase/migrations/0001_mvp.sql
 - OpenAI API key → `OPENAI_API_KEY`
 - USDA FoodData Central key (data.gov) → `FDC_API_KEY`
 
-### 4) Configure environment
+### 4) Configure environments (local + production)
 
-Create `.env` in the repo root:
+The app automatically loads `.env.<ENVIRONMENT>` first, then `.env`.
+
+Create two files:
 
 ```
+.env.local
+.env.production
+```
+
+Example **.env.local**:
+
+```
+ENVIRONMENT=local
 TELEGRAM_BOT_TOKEN=...
-SUPABASE_URL=...
-SUPABASE_SERVICE_KEY=...
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_KEY=<local_service_role_key>
 ADMIN_TOKEN=...
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.2
@@ -81,6 +91,34 @@ OPENAI_REASONING_EFFORT=high
 OPENAI_STORE=false
 FDC_API_KEY=...
 FDC_BASE_URL=https://api.nal.usda.gov/fdc/v1
+```
+
+Example **.env.production**:
+
+```
+ENVIRONMENT=production
+TELEGRAM_BOT_TOKEN=...
+SUPABASE_URL=https://<your-prod-project>.supabase.co
+SUPABASE_SERVICE_KEY=<prod_service_role_key>
+ADMIN_TOKEN=...
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.2
+OPENAI_REASONING_EFFORT=high
+OPENAI_STORE=false
+FDC_API_KEY=...
+FDC_BASE_URL=https://api.nal.usda.gov/fdc/v1
+```
+
+To run in a specific environment:
+
+```
+ENVIRONMENT=local uvicorn nutrition_tracker.api.asgi:app --reload
+```
+
+or
+
+```
+ENVIRONMENT=production uvicorn nutrition_tracker.api.asgi:app
 ```
 
 Notes:
@@ -96,9 +134,46 @@ pip install -e ".[dev]"
 uvicorn nutrition_tracker.api.asgi:app --reload
 ```
 
-### 6) Set the Telegram webhook
+Or use helper scripts:
 
-Telegram needs a public HTTPS URL. Once you have one:
+```
+bin/run_dev.sh
+bin/run_prod.sh
+bin/test.sh
+bin/lint.sh
+bin/format_check.sh
+bin/supabase_start.sh
+```
+
+### 6) Set the Telegram webhook (local via ngrok)
+
+Telegram requires a public HTTPS URL (no localhost).
+
+1) Run the app:
+
+```
+bin/run_dev.sh
+```
+
+2) Start ngrok:
+
+```
+ngrok http 8000
+```
+
+3) Set the webhook using the HTTPS URL ngrok prints:
+
+```
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<ngrok-id>.ngrok-free.app/telegram/webhook
+```
+
+4) Verify:
+
+```
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo
+```
+
+### Production
 
 ```
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-domain>/telegram/webhook

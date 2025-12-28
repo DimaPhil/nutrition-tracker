@@ -3,6 +3,7 @@
 import asyncio
 from uuid import uuid4
 
+from nutrition_tracker.adapters.fdc_client import FdcClient
 from nutrition_tracker.services.audit import AuditService
 from nutrition_tracker.services.cache import InMemoryCache
 from nutrition_tracker.services.library import LibraryService
@@ -17,6 +18,22 @@ from tests.conftest import (
     InMemoryPhotoRepository,
     InMemorySessionRepository,
 )
+
+
+class FailingFdcClient(FdcClient):
+    async def search_foods(self, query: str, page_size: int = 10) -> dict[str, object]:
+        return {
+            "foods": [
+                {
+                    "fdcId": 123,
+                    "description": "Example Food",
+                    "dataType": "Branded",
+                }
+            ]
+        }
+
+    async def get_food(self, fdc_id: int) -> dict[str, object]:
+        raise RuntimeError("timeout")
 
 
 def test_session_flow_prompts_for_item_and_weight() -> None:
@@ -216,6 +233,55 @@ def test_session_manual_entry_flow() -> None:
     prompt = asyncio.run(service.handle_text(user_id, "80"))
     assert prompt is not None
     assert session_repository.sessions[session_id].status == "AWAITING_SAVE"
+
+
+def test_session_fdc_timeout_falls_back_to_selection() -> None:
+    photo_repository = InMemoryPhotoRepository()
+    session_repository = InMemorySessionRepository()
+    nutrition_service = NutritionService(FailingFdcClient(), InMemoryCache())
+    library_service = LibraryService(InMemoryLibraryRepository())
+    meal_log_service = MealLogService(
+        nutrition_service=nutrition_service,
+        library_service=library_service,
+        repository=InMemoryMealLogRepository(),
+    )
+    audit_service = AuditService(InMemoryAuditRepository())
+    service = SessionService(
+        photo_repository=photo_repository,
+        session_repository=session_repository,
+        library_service=library_service,
+        nutrition_service=nutrition_service,
+        meal_log_service=meal_log_service,
+        audit_service=audit_service,
+    )
+
+    user_id = uuid4()
+    session_id, _ = asyncio.run(
+        service.start_session(
+            user_id=user_id,
+            telegram_chat_id=1,
+            telegram_message_id=2,
+            telegram_file_id="file-id",
+            telegram_file_unique_id="unique-id",
+            vision_items=[
+                {
+                    "label": "Oats",
+                    "estimated_grams_low": 50,
+                    "estimated_grams_high": 80,
+                }
+            ],
+        )
+    )
+
+    asyncio.run(service.handle_callback(session_id, "confirm"))
+    prompt = asyncio.run(service.handle_callback(session_id, "item_no"))
+    assert prompt is not None
+    assert session_repository.sessions[session_id].status == "AWAITING_ITEM_SELECTION"
+
+    prompt = asyncio.run(service.handle_callback(session_id, "choose", "0"))
+    assert prompt is not None
+    assert "USDA lookup timed out" in prompt.text
+    assert session_repository.sessions[session_id].status == "AWAITING_ITEM_SELECTION"
 
 
 def test_session_edit_flow_records_audit() -> None:

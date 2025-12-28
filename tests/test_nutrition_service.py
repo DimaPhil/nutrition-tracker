@@ -69,3 +69,34 @@ def test_get_food_returns_macros() -> None:
     assert details.macros.protein_g == 31
     assert details.macros.fat_g == 3.6
     assert details.macros.carbs_g == 0
+
+
+def test_nutrition_service_debug_paths() -> None:
+    client = CountingFdcClient()
+    service = NutritionService(client, InMemoryCache(), debug=True)
+
+    asyncio.run(service.search("kirkland", limit=1))
+    asyncio.run(service.search("kirkland", limit=1))
+
+    asyncio.run(service.get_food(999))
+    asyncio.run(service.get_food(999))
+
+
+def test_nutrition_service_retries_once() -> None:
+    class FlakyFdcClient(CountingFdcClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next = True
+
+        async def get_food(self, fdc_id: int) -> dict[str, object]:
+            if self.fail_next:
+                self.fail_next = False
+                raise RuntimeError("timeout")
+            return await super().get_food(fdc_id)
+
+    client = FlakyFdcClient()
+    service = NutritionService(client, InMemoryCache(), debug=True)
+
+    details = asyncio.run(service.get_food(999))
+
+    assert details.summary.description == "Kirkland chicken breast"

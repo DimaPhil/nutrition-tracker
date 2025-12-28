@@ -6,6 +6,39 @@ from typing import Protocol
 
 from nutrition_tracker.domain.vision import VisionExtract
 
+VISION_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "estimated_grams_low": {
+                        "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]
+                    },
+                    "estimated_grams_high": {
+                        "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]
+                    },
+                    "notes": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                },
+                "required": [
+                    "label",
+                    "confidence",
+                    "estimated_grams_low",
+                    "estimated_grams_high",
+                    "notes",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["items"],
+    "additionalProperties": False,
+}
+
 
 class VisionClient(Protocol):
     """Interface for LLM vision extraction."""
@@ -35,7 +68,6 @@ class VisionService:
     async def extract(self, image_bytes: bytes) -> VisionExtract:
         """Extract food items from an image via the configured client."""
         data_url = _to_data_url(image_bytes)
-        schema = VisionExtract.model_json_schema()
         prompt = (
             "Identify food items in the image. "
             "Return each item with a short label, confidence (0-1), "
@@ -46,7 +78,7 @@ class VisionService:
             reasoning_effort=self.reasoning_effort,
             store=self.store,
             image_data_url=data_url,
-            schema=schema,
+            schema=VISION_SCHEMA,
             prompt=prompt,
         )
         return VisionExtract.model_validate(raw)
@@ -54,5 +86,17 @@ class VisionService:
 
 def _to_data_url(image_bytes: bytes) -> str:
     """Convert bytes to a base64 data URL for image input."""
+    mime_type = _detect_mime_type(image_bytes)
     encoded = base64.b64encode(image_bytes).decode("utf-8")
-    return f"data:image/jpeg;base64,{encoded}"
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _detect_mime_type(image_bytes: bytes) -> str:
+    """Infer a basic image MIME type from file signatures."""
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"

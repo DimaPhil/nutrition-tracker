@@ -98,15 +98,18 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         api_key=resolved_settings.fdc_api_key,
         base_url=resolved_settings.fdc_base_url,
     )
+    debug = True
     nutrition_service = NutritionService(
         fdc_client=fdc_client,
         cache=InMemoryCache(),
+        debug=debug,
     )
     library_service = LibraryService(library_repository)
     meal_log_service = MealLogService(
         nutrition_service=nutrition_service,
         library_service=library_service,
         repository=meal_log_repository,
+        debug=debug,
     )
     audit_service = AuditService(audit_repository)
     session_service = SessionService(
@@ -116,6 +119,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         nutrition_service=nutrition_service,
         meal_log_service=meal_log_service,
         audit_service=audit_service,
+        debug=debug,
     )
     stats_service = StatsService(stats_repository)
     user_settings_service = UserSettingsService(user_settings_repository)

@@ -1,6 +1,10 @@
 """Application configuration."""
 
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENVIRONMENT = os.getenv("ENVIRONMENT", "local")
 
 
 class Settings(BaseSettings):
@@ -16,6 +20,9 @@ class Settings(BaseSettings):
     openai_store: bool = False
     fdc_api_key: str
     fdc_base_url: str = "https://api.nal.usda.gov/fdc/v1"
-    environment: str = "development"
+    environment: str = _ENVIRONMENT
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(f".env.{_ENVIRONMENT}", ".env"),
+        extra="ignore",
+    )

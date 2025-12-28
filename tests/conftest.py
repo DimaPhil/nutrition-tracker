@@ -65,6 +65,8 @@ class FakeTelegramClient(TelegramClient):
 
     messages: list[tuple[int, str]] = field(default_factory=list)
     callbacks: list[tuple[str, str | None]] = field(default_factory=list)
+    commands: list[dict[str, str]] | None = None
+    menu_button: dict[str, object] | None = None
 
     async def send_message(
         self, chat_id: int, text: str, reply_markup: dict | None = None
@@ -75,6 +77,14 @@ class FakeTelegramClient(TelegramClient):
         self, callback_query_id: str, text: str | None = None
     ) -> None:
         self.callbacks.append((callback_query_id, text))
+
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        self.commands = commands
+
+    async def set_chat_menu_button(
+        self, menu_button: dict[str, object] | None = None
+    ) -> None:
+        self.menu_button = menu_button
 
 
 @dataclass

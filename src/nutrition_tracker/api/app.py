@@ -1,5 +1,6 @@
 """FastAPI application factory."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -9,18 +10,31 @@ from fastapi import FastAPI, Request
 
 from nutrition_tracker.api.admin import router as admin_router
 from nutrition_tracker.api.telegram_models import TelegramPhotoSize, TelegramUpdate
+from nutrition_tracker.app_logging import configure_logging
 from nutrition_tracker.containers import AppContainer
 from nutrition_tracker.domain.library import LibraryFood
 from nutrition_tracker.domain.meals import MealLogDetail, MealLogSummary
 from nutrition_tracker.domain.stats import DailyTotals, MealLogRow
 from nutrition_tracker.services.stats import PeriodSummary
+from nutrition_tracker.telegram_commands import CHAT_MENU_BUTTON, telegram_commands
 
 
 def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
     """Create a FastAPI app configured with dependencies."""
+    configure_logging()
+    logger = logging.getLogger(__name__)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        try:
+            await app.state.container.telegram_client.set_my_commands(
+                telegram_commands()
+            )
+            await app.state.container.telegram_client.set_chat_menu_button(
+                CHAT_MENU_BUTTON
+            )
+        except Exception:
+            logger.exception("Failed to sync Telegram bot commands")
         yield
         await app.state.container.close_resources()
 
@@ -233,9 +247,42 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
                         photo.file_id
                     )
                 )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to download Telegram photo",
+                    extra={"file_id": photo.file_id},
+                )
+                await state_container.telegram_client.send_message(
+                    chat_id=message.chat.id,
+                    text=_format_photo_error(
+                        state_container, exc, "Couldn't download that photo."
+                    ),
+                )
+                return {"status": "ok"}
+
+            try:
                 vision_result = await state_container.vision_service.extract(
                     image_bytes
                 )
+            except Exception as exc:
+                logger.exception(
+                    "Vision extraction failed",
+                    extra={"file_id": photo.file_id},
+                )
+                await state_container.telegram_client.send_message(
+                    chat_id=message.chat.id,
+                    text=_format_photo_error(
+                        state_container,
+                        exc,
+                        (
+                            "Sorry, I couldn't analyze that photo. "
+                            "Please try a clearer shot."
+                        ),
+                    ),
+                )
+                return {"status": "ok"}
+
+            try:
                 vision_items = [item.model_dump() for item in vision_result.items]
                 _, prompt = await state_container.session_service.start_session(
                     user_id=user.id,
@@ -250,12 +297,14 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
                     text=prompt.text,
                     reply_markup=prompt.reply_markup,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.exception("Failed to start session", extra={"user_id": user.id})
                 await state_container.telegram_client.send_message(
                     chat_id=message.chat.id,
-                    text=(
-                        "Sorry, I couldn't process that photo. "
-                        "Please try sending it again."
+                    text=_format_photo_error(
+                        state_container,
+                        exc,
+                        ("Sorry, I couldn't start a meal session. Please try again."),
                     ),
                 )
             return {"status": "ok"}
@@ -295,6 +344,17 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
 def _select_largest_photo(photos: list[TelegramPhotoSize]) -> TelegramPhotoSize:
     """Select the largest photo size from the Telegram payload."""
     return max(photos, key=lambda photo: (photo.width * photo.height))
+
+
+def _format_photo_error(
+    state_container: AppContainer, exc: Exception, fallback: str
+) -> str:
+    """Return a user-facing photo error message with local debug info."""
+    if state_container.settings.environment == "local":
+        detail = f"{type(exc).__name__}: {exc}".strip()
+        if detail:
+            return f"{fallback} (debug: {detail})"
+    return fallback
 
 
 def _parse_session_callback(data: str) -> tuple[UUID, str, str | None] | None:

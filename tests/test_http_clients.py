@@ -57,6 +57,33 @@ def test_telegram_client_send_and_callback() -> None:
     asyncio.run(client.answer_callback_query(callback_query_id="cbq-1"))
 
 
+def test_telegram_client_commands_and_menu_button() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        payload = json.loads(request.content.decode())
+        if request.url.path.endswith("/setMyCommands"):
+            assert payload["commands"][0]["command"] == "start"
+        if request.url.path.endswith("/setChatMenuButton"):
+            assert payload["menu_button"]["type"] == "commands"
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    transport = httpx.MockTransport(handler)
+    async_client = httpx.AsyncClient(transport=transport)
+    client = HttpxTelegramClient(bot_token="token", http_client=async_client)
+
+    asyncio.run(
+        client.set_my_commands(
+            [{"command": "start", "description": "Onboarding and timezone setup"}]
+        )
+    )
+    asyncio.run(client.set_chat_menu_button({"type": "commands"}))
+
+    assert any(path.endswith("/setMyCommands") for path in seen_paths)
+    assert any(path.endswith("/setChatMenuButton") for path in seen_paths)
+
+
 def test_telegram_file_client_downloads_bytes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/getFile"):

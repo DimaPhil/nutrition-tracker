@@ -19,6 +19,14 @@ class TelegramClient(Protocol):
     ) -> None:
         """Answer a Telegram callback query."""
 
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        """Set the bot command list."""
+
+    async def set_chat_menu_button(
+        self, menu_button: dict[str, object] | None = None
+    ) -> None:
+        """Set the chat menu button."""
+
 
 @dataclass
 class HttpxTelegramClient:
@@ -57,3 +65,21 @@ class HttpxTelegramClient:
     async def close(self) -> None:
         """Close the underlying HTTP client session."""
         await self.http_client.aclose()
+
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        """Set the bot command list."""
+        url = f"https://api.telegram.org/bot{self.bot_token}/setMyCommands"
+        payload: dict[str, object] = {"commands": commands}
+        response = await self.http_client.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+
+    async def set_chat_menu_button(
+        self, menu_button: dict[str, object] | None = None
+    ) -> None:
+        """Set the chat menu button."""
+        url = f"https://api.telegram.org/bot{self.bot_token}/setChatMenuButton"
+        payload: dict[str, object] = {
+            "menu_button": menu_button or {"type": "commands"}
+        }
+        response = await self.http_client.post(url, json=payload, timeout=10)
+        response.raise_for_status()

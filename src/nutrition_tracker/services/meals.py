@@ -1,5 +1,6 @@
 """Meal logging service."""
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -16,6 +17,8 @@ from nutrition_tracker.domain.nutrition import MacroProfile
 from nutrition_tracker.domain.stats import MealLogRow
 from nutrition_tracker.services.library import LibraryService
 from nutrition_tracker.services.nutrition import NutritionService
+
+_logger = logging.getLogger(__name__)
 
 
 class MealLogRepository(Protocol):
@@ -59,10 +62,13 @@ class MealLogService:
     nutrition_service: NutritionService
     library_service: LibraryService
     repository: MealLogRepository
+    debug: bool = False
 
     async def compute_summary(self, items: list[dict[str, object]]) -> MealLogSummary:
         """Compute totals and snapshots without persisting."""
-        snapshots, total = await _build_snapshots(self.nutrition_service, items)
+        snapshots, total = await _build_snapshots(
+            self.nutrition_service, items, debug=self.debug
+        )
         return MealLogSummary(
             meal_id=None,
             total_calories=total.calories,
@@ -78,7 +84,7 @@ class MealLogService:
         """Compute macros for items and persist the meal log."""
         resolved_items = _ensure_library_refs(self.library_service, items, user_id)
         snapshots, total = await _build_snapshots(
-            self.nutrition_service, resolved_items
+            self.nutrition_service, resolved_items, debug=self.debug
         )
         meal_id = self.repository.create_meal_log(
             user_id=user_id,
@@ -147,7 +153,10 @@ class MealLogService:
 
 
 async def _build_snapshots(
-    nutrition_service: NutritionService, items: list[dict[str, object]]
+    nutrition_service: NutritionService,
+    items: list[dict[str, object]],
+    *,
+    debug: bool = False,
 ) -> tuple[list[MealItemSnapshot], MacroProfile]:
     snapshots: list[MealItemSnapshot] = []
     total = MacroProfile(0.0, 0.0, 0.0, 0.0)
@@ -155,7 +164,7 @@ async def _build_snapshots(
         label = str(item.get("name") or item.get("label") or "item")
         grams = _to_float(item.get("grams"))
         base_macros, basis, serving_size = await _resolve_base_macros(
-            nutrition_service, item
+            nutrition_service, item, debug=debug
         )
         portion = _compute_portion_macros(base_macros, grams, basis, serving_size)
         food_id = _parse_uuid(item.get("food_id"))
@@ -191,9 +200,18 @@ async def _build_snapshots(
 
 
 async def _resolve_base_macros(
-    nutrition_service: NutritionService, item: dict[str, object]
+    nutrition_service: NutritionService,
+    item: dict[str, object],
+    *,
+    debug: bool = False,
 ) -> tuple[MacroProfile, str, float | None]:
     if _has_macros(item):
+        if debug:
+            _logger.info(
+                "Macros from payload: name=%s source=%s",
+                item.get("name") or item.get("label"),
+                item.get("source_type"),
+            )
         basis = str(item.get("basis") or "per100g")
         serving_size = (
             float(item["serving_size_g"])
@@ -211,6 +229,8 @@ async def _resolve_base_macros(
             serving_size,
         )
     label = str(item.get("label") or item.get("name") or "item")
+    if debug:
+        _logger.info("Macros fallback to FDC: label=%s", label)
     return await _lookup_fdc_macros(nutrition_service, label)
 
 
