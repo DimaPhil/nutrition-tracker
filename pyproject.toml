@@ -4,8 +4,16 @@ version = "0.1.0"
 description = "A Python application for tracking nutritional data"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.111.0",
+    "httpx>=0.27.0",
+    "openai>=1.59.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "supabase>=2.6.0",
+    "uvicorn>=0.30.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -65,7 +73,7 @@ show_missing = true
 # ruff configuration
 # ============================================================================
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 88
 src = ["src", "tests"]
 
@@ -101,8 +109,13 @@ ignore = [
 "tests/*" = [
     "S101",   # Use of assert
     "D103",   # Missing docstring in public function
+    "D101",   # Missing docstring in public class
+    "D102",   # Missing docstring in public method
+    "D105",   # Missing docstring in magic method
     "ANN",    # Type annotations not required in tests
     "PLR2004", # Magic value comparison
+    "ARG002", # Unused method argument
+    "S106",   # Possible hardcoded password
 ]
 
 [tool.ruff.lint.pydocstyle]
