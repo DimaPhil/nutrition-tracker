@@ -52,6 +52,23 @@ class SupabaseLibraryRepository(LibraryRepository):
             return None
         return _parse_food(response.data[0])
 
+    def find_by_source_ref(
+        self, user_id: UUID, source_type: str, source_ref: str
+    ) -> LibraryFood | None:
+        """Return a food entry by source reference."""
+        response = (
+            self.client.table("foods_user_library")
+            .select("*")
+            .eq("user_id", str(user_id))
+            .eq("source_type", source_type)
+            .eq("source_ref", source_ref)
+            .limit(1)
+            .execute()
+        )
+        if not response.data:
+            return None
+        return _parse_food(response.data[0])
+
     def search_foods(self, user_id: UUID, query: str, limit: int) -> list[LibraryFood]:
         """Search foods by name and aliases."""
         pattern = f"%{query}%"

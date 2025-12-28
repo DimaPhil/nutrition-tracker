@@ -23,7 +23,8 @@ class SupabaseStatsRepository(StatsRepository):
         response = (
             self.client.table("meal_logs")
             .select(
-                "logged_at, total_calories, total_protein_g, total_fat_g, total_carbs_g"
+                "id, logged_at, total_calories, total_protein_g, total_fat_g, "
+                "total_carbs_g"
             )
             .eq("user_id", str(user_id))
             .gte("logged_at", start.isoformat())
@@ -38,7 +39,8 @@ class SupabaseStatsRepository(StatsRepository):
         response = (
             self.client.table("meal_logs")
             .select(
-                "logged_at, total_calories, total_protein_g, total_fat_g, total_carbs_g"
+                "id, logged_at, total_calories, total_protein_g, total_fat_g, "
+                "total_carbs_g"
             )
             .eq("user_id", str(user_id))
             .order("logged_at", desc=True)
@@ -56,6 +58,7 @@ def _parse_row(row: dict[str, object]) -> MealLogRow:
         else datetime.min
     )
     return MealLogRow(
+        meal_id=UUID(row["id"]),
         logged_at=logged_at,
         total_calories=float(row.get("total_calories", 0.0)),
         total_protein_g=float(row.get("total_protein_g", 0.0)),

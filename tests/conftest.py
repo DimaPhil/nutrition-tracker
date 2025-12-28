@@ -11,11 +11,12 @@ from nutrition_tracker.config import Settings
 from nutrition_tracker.containers import AppContainer
 from nutrition_tracker.domain.admin import AdminUser
 from nutrition_tracker.domain.library import LibraryFood
-from nutrition_tracker.domain.meals import MealItemSnapshot
+from nutrition_tracker.domain.meals import MealItemRecord, MealItemSnapshot
 from nutrition_tracker.domain.models import UserRecord
 from nutrition_tracker.domain.sessions import SessionRecord
 from nutrition_tracker.domain.stats import MealLogRow
 from nutrition_tracker.services.admin import AdminRepository, AdminService
+from nutrition_tracker.services.audit import AuditRepository, AuditService
 from nutrition_tracker.services.cache import InMemoryCache
 from nutrition_tracker.services.commands import StartCommandHandler
 from nutrition_tracker.services.library import LibraryRepository, LibraryService
@@ -193,7 +194,11 @@ class InMemorySessionRepository(SessionRepository):
     sessions: dict[UUID, SessionRecord] = field(default_factory=dict)
 
     def create_session(
-        self, user_id: UUID, photo_id: UUID, status: str, context: dict[str, object]
+        self,
+        user_id: UUID,
+        photo_id: UUID | None,
+        status: str,
+        context: dict[str, object],
     ) -> SessionRecord:
         session = SessionRecord(
             id=uuid4(),
@@ -284,6 +289,18 @@ class InMemoryLibraryRepository(LibraryRepository):
     def get_food(self, food_id: UUID) -> LibraryFood | None:
         return self.foods.get(food_id)
 
+    def find_by_source_ref(
+        self, user_id: UUID, source_type: str, source_ref: str
+    ) -> LibraryFood | None:
+        for food in self.foods.values():
+            if (
+                food.user_id == user_id
+                and food.source_type == source_type
+                and str(food.source_ref) == source_ref
+            ):
+                return food
+        return None
+
     def search_foods(self, user_id: UUID, query: str, limit: int) -> list[LibraryFood]:
         query_lower = query.lower()
         results = [
@@ -328,7 +345,7 @@ class InMemoryMealLogRepository(MealLogRepository):
     """In-memory meal log repository for tests."""
 
     meals: dict[UUID, dict[str, object]] = field(default_factory=dict)
-    items: list[MealItemSnapshot] = field(default_factory=list)
+    items: dict[UUID, MealItemRecord] = field(default_factory=dict)
 
     def create_meal_log(self, user_id: UUID, logged_at, totals) -> UUID:
         meal_id = uuid4()
@@ -342,7 +359,58 @@ class InMemoryMealLogRepository(MealLogRepository):
     def create_meal_items(
         self, meal_log_id: UUID, items: list[MealItemSnapshot]
     ) -> None:
-        self.items.extend(items)
+        for item in items:
+            item_id = uuid4()
+            self.items[item_id] = MealItemRecord(
+                id=item_id,
+                meal_log_id=meal_log_id,
+                food_id=item.food_id,
+                name=item.name,
+                grams=item.grams,
+                calories=item.calories,
+                protein_g=item.protein_g,
+                fat_g=item.fat_g,
+                carbs_g=item.carbs_g,
+                nutrition_snapshot=item.nutrition_snapshot or {},
+            )
+
+    def get_meal_log(self, meal_log_id: UUID):
+        meal = self.meals.get(meal_log_id)
+        if not meal:
+            return None
+        return MealLogRow(
+            meal_id=meal_log_id,
+            logged_at=meal["logged_at"],
+            total_calories=meal["totals"].calories,
+            total_protein_g=meal["totals"].protein_g,
+            total_fat_g=meal["totals"].fat_g,
+            total_carbs_g=meal["totals"].carbs_g,
+        )
+
+    def list_meal_items(self, meal_log_id: UUID) -> list[MealItemRecord]:
+        return [item for item in self.items.values() if item.meal_log_id == meal_log_id]
+
+    def get_meal_item(self, meal_item_id: UUID) -> MealItemRecord | None:
+        return self.items.get(meal_item_id)
+
+    def update_meal_item(self, meal_item_id: UUID, grams: float, macros) -> None:
+        item = self.items[meal_item_id]
+        self.items[meal_item_id] = MealItemRecord(
+            id=item.id,
+            meal_log_id=item.meal_log_id,
+            food_id=item.food_id,
+            name=item.name,
+            grams=grams,
+            calories=macros.calories,
+            protein_g=macros.protein_g,
+            fat_g=macros.fat_g,
+            carbs_g=macros.carbs_g,
+            nutrition_snapshot=item.nutrition_snapshot,
+        )
+
+    def update_meal_log_totals(self, meal_log_id: UUID, totals) -> None:
+        meal = self.meals[meal_log_id]
+        meal["totals"] = totals
 
 
 @dataclass
@@ -393,6 +461,33 @@ class InMemoryAdminRepository(AdminRepository):
         return self.audits.get(user_id, [])[:limit]
 
 
+@dataclass
+class InMemoryAuditRepository(AuditRepository):
+    """In-memory audit repository for tests."""
+
+    events: list[dict[str, object]] = field(default_factory=list)
+
+    def create_event(  # noqa: PLR0913
+        self,
+        user_id: UUID,
+        entity_type: str,
+        entity_id: UUID,
+        event_type: str,
+        before: dict[str, object] | None,
+        after: dict[str, object] | None,
+    ) -> None:
+        self.events.append(
+            {
+                "user_id": user_id,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "event_type": event_type,
+                "before": before,
+                "after": after,
+            }
+        )
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
@@ -422,10 +517,8 @@ def container(
     telegram_client: FakeTelegramClient,
 ) -> AppContainer:
     user_service = UserService(user_repository)
-    start_handler = StartCommandHandler(user_service, telegram_client)
     photo_repository = InMemoryPhotoRepository()
     session_repository = InMemorySessionRepository()
-    session_service = SessionService(photo_repository, session_repository)
     telegram_file_client = FakeTelegramFileClient()
     vision_service = VisionService(
         client=FakeVisionClient(),
@@ -440,10 +533,25 @@ def container(
     library_service = LibraryService(InMemoryLibraryRepository())
     meal_log_service = MealLogService(
         nutrition_service=nutrition_service,
+        library_service=library_service,
         repository=InMemoryMealLogRepository(),
+    )
+    audit_service = AuditService(InMemoryAuditRepository())
+    session_service = SessionService(
+        photo_repository=photo_repository,
+        session_repository=session_repository,
+        library_service=library_service,
+        nutrition_service=nutrition_service,
+        meal_log_service=meal_log_service,
+        audit_service=audit_service,
     )
     stats_service = StatsService(InMemoryStatsRepository())
     user_settings_service = UserSettingsService(InMemoryUserSettingsRepository())
+    start_handler = StartCommandHandler(
+        user_service=user_service,
+        user_settings_service=user_settings_service,
+        telegram_client=telegram_client,
+    )
     admin_service = AdminService(
         admin_repository=InMemoryAdminRepository(),
         stats_repository=stats_service.repository,

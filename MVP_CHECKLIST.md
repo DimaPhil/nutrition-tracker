@@ -13,6 +13,8 @@ Tracking items for the Telegram photo → calories + PFC MVP. Checkboxes will be
 - [x] Callback routing (inline keyboard actions)
 - [x] Session resume logic
 - [x] Photo triggers session + at least one question loop works
+- [x] Fix items flow (manual list override)
+- [x] Library-first item suggestions + manual fallback
 
 ## Epic 2 — Telegram photo → OpenAI vision extract
 - [x] Telegram `getFile` download
@@ -37,7 +39,9 @@ Tracking items for the Telegram photo → calories + PFC MVP. Checkboxes will be
 ## Epic 5 — Portion workflow
 - [x] Grams entry parser
 - [x] Estimate acceptance flow
+- [x] Skip item option
 - [x] Recompute + summary
+- [x] Edit-before-save grams flow
 - [x] User can log 2 items with weights and save
 
 ## Epic 6 — History & stats commands
@@ -45,6 +49,8 @@ Tracking items for the Telegram photo → calories + PFC MVP. Checkboxes will be
 - [x] `/week` daily totals + avg
 - [x] `/month` daily totals + avg
 - [x] `/history` last N logs
+- [x] `/history` tap-to-view details
+- [x] Edit last log grams (via history)
 - [x] Aggregation respects timezone
 
 ## Epic 7 — Admin MVP

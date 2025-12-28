@@ -3,13 +3,15 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 
 from nutrition_tracker.api.admin import router as admin_router
 from nutrition_tracker.api.telegram_models import TelegramPhotoSize, TelegramUpdate
 from nutrition_tracker.containers import AppContainer
-from nutrition_tracker.domain.meals import MealLogSummary
+from nutrition_tracker.domain.library import LibraryFood
+from nutrition_tracker.domain.meals import MealLogDetail, MealLogSummary
 from nutrition_tracker.domain.stats import DailyTotals, MealLogRow
 from nutrition_tracker.services.stats import PeriodSummary
 
@@ -33,7 +35,7 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
         return {"status": "ok"}
 
     @app.post("/telegram/webhook")
-    async def telegram_webhook(  # noqa: PLR0912, PLR0915
+    async def telegram_webhook(  # noqa: PLR0911, PLR0912, PLR0915
         update: TelegramUpdate, request: Request
     ) -> dict[str, str]:
         """Handle Telegram webhook updates."""
@@ -42,9 +44,9 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
             callback = update.callback_query
             await state_container.telegram_client.answer_callback_query(callback.id)
             if callback.data:
-                parsed = _parse_callback(callback.data)
-                if parsed:
-                    session_id, action = parsed
+                session_callback = _parse_session_callback(callback.data)
+                if session_callback:
+                    session_id, action, payload = session_callback
                     if action == "save":
                         session_repository = (
                             state_container.session_service.session_repository
@@ -74,8 +76,8 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
                                 text=_format_meal_summary(summary),
                             )
                     else:
-                        prompt = state_container.session_service.handle_callback(
-                            session_id, action
+                        prompt = await state_container.session_service.handle_callback(
+                            session_id, action, payload
                         )
                         if prompt and callback.message:
                             await state_container.telegram_client.send_message(
@@ -83,6 +85,64 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
                                 text=prompt.text,
                                 reply_markup=prompt.reply_markup,
                             )
+                history_id = _parse_history_callback(callback.data)
+                if history_id and callback.message:
+                    detail = state_container.meal_log_service.get_meal_detail(
+                        history_id
+                    )
+                    if detail:
+                        await state_container.telegram_client.send_message(
+                            chat_id=callback.message.chat.id,
+                            text=_format_meal_detail(detail),
+                            reply_markup=_history_detail_keyboard(history_id),
+                        )
+                edit_id = _parse_edit_callback(callback.data)
+                if edit_id and callback.message:
+                    user = state_container.user_service.ensure_user(
+                        callback.from_user.id
+                    )
+                    session_repo = state_container.session_service.session_repository
+                    active = session_repo.get_active_session(user.id)
+                    if active and active.status not in {"COMPLETED", "CANCELLED"}:
+                        await state_container.telegram_client.send_message(
+                            chat_id=callback.message.chat.id,
+                            text=(
+                                "You already have an active session. "
+                                "Send /cancel to stop it."
+                            ),
+                        )
+                        return {"status": "ok"}
+                    prompt = state_container.session_service.start_edit_session(
+                        user.id, edit_id
+                    )
+                    if prompt:
+                        await state_container.telegram_client.send_message(
+                            chat_id=callback.message.chat.id,
+                            text=prompt.text,
+                            reply_markup=prompt.reply_markup,
+                        )
+                library_action = _parse_library_callback(callback.data)
+                if library_action == "add" and callback.message:
+                    user = state_container.user_service.ensure_user(
+                        callback.from_user.id
+                    )
+                    session_repo = state_container.session_service.session_repository
+                    active = session_repo.get_active_session(user.id)
+                    if active and active.status not in {"COMPLETED", "CANCELLED"}:
+                        await state_container.telegram_client.send_message(
+                            chat_id=callback.message.chat.id,
+                            text=(
+                                "You already have an active session. "
+                                "Send /cancel to stop it."
+                            ),
+                        )
+                        return {"status": "ok"}
+                    prompt = state_container.session_service.start_library_add_session(
+                        user.id
+                    )
+                    await state_container.telegram_client.send_message(
+                        chat_id=callback.message.chat.id, text=prompt.text
+                    )
             return {"status": "ok"}
 
         message = update.message
@@ -97,10 +157,12 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
             user = state_container.user_service.ensure_user(message.from_user.id)
             timezone = state_container.user_settings_service.get_timezone(user.id)
             if message.text == "/today":
-                daily = state_container.stats_service.get_today(user.id, timezone)
+                daily, logs = state_container.stats_service.get_today_with_logs(
+                    user.id, timezone
+                )
                 await state_container.telegram_client.send_message(
                     chat_id=message.chat.id,
-                    text=_format_daily_totals("Today", daily),
+                    text=_format_daily_with_logs("Today", daily, logs),
                 )
             elif message.text == "/week":
                 summary = state_container.stats_service.get_week(user.id, timezone)
@@ -119,11 +181,51 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
                 await state_container.telegram_client.send_message(
                     chat_id=message.chat.id,
                     text=_format_history(history),
+                    reply_markup=_history_keyboard(history),
+                )
+            return {"status": "ok"}
+
+        if message and message.text == "/library":
+            user = state_container.user_service.ensure_user(message.from_user.id)
+            session_repo = state_container.session_service.session_repository
+            active = session_repo.get_active_session(user.id)
+            if active and active.status not in {"COMPLETED", "CANCELLED"}:
+                await state_container.telegram_client.send_message(
+                    chat_id=message.chat.id,
+                    text="You already have an active session. Send /cancel to stop it.",
+                )
+                return {"status": "ok"}
+            foods = state_container.library_service.search(user.id, None, limit=5)
+            await state_container.telegram_client.send_message(
+                chat_id=message.chat.id,
+                text=_format_library(foods),
+                reply_markup=_library_keyboard(),
+            )
+            return {"status": "ok"}
+
+        if message and message.text == "/cancel":
+            user = state_container.user_service.ensure_user(message.from_user.id)
+            prompt = state_container.session_service.cancel_active_session(user.id)
+            if prompt:
+                await state_container.telegram_client.send_message(
+                    chat_id=message.chat.id, text=prompt.text
+                )
+            else:
+                await state_container.telegram_client.send_message(
+                    chat_id=message.chat.id, text="No active session to cancel."
                 )
             return {"status": "ok"}
 
         if message and message.photo:
             user = state_container.user_service.ensure_user(message.from_user.id)
+            session_repo = state_container.session_service.session_repository
+            active = session_repo.get_active_session(user.id)
+            if active and active.status not in {"COMPLETED", "CANCELLED"}:
+                await state_container.telegram_client.send_message(
+                    chat_id=message.chat.id,
+                    text="You already have an active session. Send /cancel to stop it.",
+                )
+                return {"status": "ok"}
             photo = _select_largest_photo(message.photo)
             try:
                 image_bytes = (
@@ -135,7 +237,7 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
                     image_bytes
                 )
                 vision_items = [item.model_dump() for item in vision_result.items]
-                _, prompt = state_container.session_service.start_session(
+                _, prompt = await state_container.session_service.start_session(
                     user_id=user.id,
                     telegram_chat_id=message.chat.id,
                     telegram_message_id=message.message_id,
@@ -160,13 +262,31 @@ def create_app(container: AppContainer) -> FastAPI:  # noqa: PLR0915
 
         if message and message.text:
             user = state_container.user_service.ensure_user(message.from_user.id)
-            prompt = state_container.session_service.handle_text(user.id, message.text)
+            prompt = await state_container.session_service.handle_text(
+                user.id, message.text
+            )
             if prompt:
                 await state_container.telegram_client.send_message(
                     chat_id=message.chat.id,
                     text=prompt.text,
                     reply_markup=prompt.reply_markup,
                 )
+                return {"status": "ok"}
+            if not state_container.user_settings_service.is_timezone_set(user.id):
+                timezone = message.text.strip()
+                if _is_valid_timezone(timezone):
+                    state_container.user_settings_service.set_timezone(
+                        user.id, timezone
+                    )
+                    await state_container.telegram_client.send_message(
+                        chat_id=message.chat.id,
+                        text=f"Timezone saved: {timezone}.",
+                    )
+                else:
+                    await state_container.telegram_client.send_message(
+                        chat_id=message.chat.id,
+                        text=("Please send a valid timezone like America/Los_Angeles."),
+                    )
         return {"status": "ok"}
 
     return app
@@ -177,18 +297,46 @@ def _select_largest_photo(photos: list[TelegramPhotoSize]) -> TelegramPhotoSize:
     return max(photos, key=lambda photo: (photo.width * photo.height))
 
 
-def _parse_callback(data: str) -> tuple[UUID, str] | None:
-    """Parse callback data in the format s:<uuid>:<action>."""
+def _parse_session_callback(data: str) -> tuple[UUID, str, str | None] | None:
+    """Parse callback data in the format s:<uuid>:<action>[:payload]."""
     if not data.startswith("s:"):
         return None
-    parts = data.split(":", maxsplit=2)
-    if len(parts) != CALLBACK_PARTS:
+    parts = data.split(":", maxsplit=3)
+    if len(parts) not in {3, 4}:
         return None
-    _, session_id, action = parts
+    _, session_id, action, *rest = parts
+    payload = rest[0] if rest else None
     try:
-        return UUID(session_id), action
+        return UUID(session_id), action, payload
     except ValueError:
         return None
+
+
+def _parse_history_callback(data: str) -> UUID | None:
+    if not data.startswith("h:"):
+        return None
+    _, raw_id = data.split(":", maxsplit=1)
+    try:
+        return UUID(raw_id)
+    except ValueError:
+        return None
+
+
+def _parse_edit_callback(data: str) -> UUID | None:
+    if not data.startswith("e:"):
+        return None
+    _, raw_id = data.split(":", maxsplit=1)
+    try:
+        return UUID(raw_id)
+    except ValueError:
+        return None
+
+
+def _parse_library_callback(data: str) -> str | None:
+    if not data.startswith("lib:"):
+        return None
+    _, action = data.split(":", maxsplit=1)
+    return action
 
 
 def _format_meal_summary(summary: MealLogSummary) -> str:
@@ -202,7 +350,10 @@ def _format_meal_summary(summary: MealLogSummary) -> str:
         "Items:",
     ]
     for item in summary.items:
-        lines.append(f"- {item.name}: {item.grams:.0f}g ({item.calories:.0f} kcal)")
+        lines.append(
+            f"- {item.name}: {item.grams:.0f}g — {item.calories:.0f} kcal "
+            f"({item.protein_g:.1f}P/{item.fat_g:.1f}F/{item.carbs_g:.1f}C)"
+        )
     return "\n".join(lines)
 
 
@@ -217,15 +368,36 @@ def _format_daily_totals(label: str, totals: DailyTotals) -> str:
     )
 
 
+def _format_daily_with_logs(
+    label: str, totals: DailyTotals, logs: list[MealLogRow]
+) -> str:
+    """Format daily totals with per-meal list."""
+    lines = [
+        _format_daily_totals(label, totals),
+    ]
+    if logs:
+        lines.append("Meals:")
+        for log in logs:
+            lines.append(
+                f"- {log.logged_at.time().strftime('%H:%M')}: "
+                f"{log.total_calories:.0f} kcal"
+            )
+    return "\n".join(lines)
+
+
 def _format_period_summary(label: str, summary: PeriodSummary) -> str:
     """Format weekly or monthly totals."""
-    return (
-        f"{label} averages:\\n"
-        f"Calories: {summary.avg_calories:.0f}\\n"
-        f"Protein: {summary.avg_protein_g:.1f} g\\n"
-        f"Fat: {summary.avg_fat_g:.1f} g\\n"
-        f"Carbs: {summary.avg_carbs_g:.1f} g"
-    )
+    lines = [
+        f"{label} averages:",
+        f"Calories: {summary.avg_calories:.0f}",
+        f"Protein: {summary.avg_protein_g:.1f} g",
+        f"Fat: {summary.avg_fat_g:.1f} g",
+        f"Carbs: {summary.avg_carbs_g:.1f} g",
+        "Daily totals:",
+    ]
+    for day in summary.daily:
+        lines.append(f"- {day.day}: {day.calories:.0f} kcal")
+    return "\n".join(lines)
 
 
 def _format_history(history: list[MealLogRow]) -> str:
@@ -238,4 +410,60 @@ def _format_history(history: list[MealLogRow]) -> str:
     return "\n".join(lines)
 
 
-CALLBACK_PARTS = 3
+def _format_library(foods: list[LibraryFood]) -> str:
+    if not foods:
+        return "Your library is empty. Add a manual entry to get started."
+    lines = ["Your top foods:"]
+    for food in foods:
+        lines.append(f"- {food.name} ({food.calories:.0f} kcal per 100g)")
+    return "\n".join(lines)
+
+
+def _history_keyboard(history: list[MealLogRow]) -> dict | None:
+    if not history:
+        return None
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": _history_button_label(entry),
+                    "callback_data": f"h:{entry.meal_id}",
+                }
+            ]
+            for entry in history
+        ]
+    }
+
+
+def _history_detail_keyboard(meal_id: UUID) -> dict:
+    return {
+        "inline_keyboard": [[{"text": "Edit grams", "callback_data": f"e:{meal_id}"}]]
+    }
+
+
+def _library_keyboard() -> dict:
+    return {
+        "inline_keyboard": [[{"text": "Add manual entry", "callback_data": "lib:add"}]]
+    }
+
+
+def _format_meal_detail(detail: MealLogDetail) -> str:
+    lines = [
+        f"Meal: {detail.total_calories:.0f} kcal",
+        "Items:",
+    ]
+    for item in detail.items:
+        lines.append(f"- {item.name}: {item.grams:.0f}g — {item.calories:.0f} kcal")
+    return "\n".join(lines)
+
+
+def _history_button_label(entry: MealLogRow) -> str:
+    return f"{entry.logged_at.date()} — {entry.total_calories:.0f} kcal"
+
+
+def _is_valid_timezone(value: str) -> bool:
+    try:
+        ZoneInfo(value)
+    except Exception:
+        return False
+    return True

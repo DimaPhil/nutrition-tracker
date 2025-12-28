@@ -45,3 +45,13 @@ def test_admin_sessions_endpoint(container) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["sessions"][0]["id"] == "session-1"
+
+
+def test_admin_ui_endpoint(container) -> None:
+    app = create_app(container)
+    client = TestClient(app)
+
+    response = client.get("/admin/ui")
+
+    assert response.status_code == 200
+    assert "Nutrition Tracker Admin" in response.text

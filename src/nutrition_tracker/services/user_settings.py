@@ -28,3 +28,7 @@ class UserSettingsService:
     def set_timezone(self, user_id: UUID, timezone: str) -> None:
         """Persist a user's timezone."""
         self.repository.set_timezone(user_id, timezone)
+
+    def is_timezone_set(self, user_id: UUID) -> bool:
+        """Return True when the user's timezone is configured."""
+        return self.repository.get_timezone(user_id) is not None

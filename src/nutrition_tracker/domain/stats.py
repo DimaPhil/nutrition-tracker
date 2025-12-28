@@ -2,12 +2,14 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from uuid import UUID
 
 
 @dataclass(frozen=True)
 class MealLogRow:
     """Summary data for a logged meal."""
 
+    meal_id: UUID
     logged_at: datetime
     total_calories: float
     total_protein_g: float

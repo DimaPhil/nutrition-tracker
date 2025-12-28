@@ -8,6 +8,7 @@ from supabase import create_client
 from nutrition_tracker.adapters.fdc_client import HttpxFdcClient
 from nutrition_tracker.adapters.openai_vision_client import OpenAIVisionClient
 from nutrition_tracker.adapters.supabase_admin_repository import SupabaseAdminRepository
+from nutrition_tracker.adapters.supabase_audit_repository import SupabaseAuditRepository
 from nutrition_tracker.adapters.supabase_library_repository import (
     SupabaseLibraryRepository,
 )
@@ -33,6 +34,7 @@ from nutrition_tracker.adapters.telegram_file_client import (
 )
 from nutrition_tracker.config import Settings
 from nutrition_tracker.services.admin import AdminService
+from nutrition_tracker.services.audit import AuditService
 from nutrition_tracker.services.cache import InMemoryCache
 from nutrition_tracker.services.commands import StartCommandHandler
 from nutrition_tracker.services.library import LibraryService
@@ -79,8 +81,8 @@ def build_container(settings: Settings | None = None) -> AppContainer:
     stats_repository = SupabaseStatsRepository(supabase_client)
     user_settings_repository = SupabaseUserSettingsRepository(supabase_client)
     admin_repository = SupabaseAdminRepository(supabase_client)
+    audit_repository = SupabaseAuditRepository(supabase_client)
     user_service = UserService(user_repository)
-    session_service = SessionService(photo_repository, session_repository)
     telegram_client = HttpxTelegramClient.create(resolved_settings.telegram_bot_token)
     telegram_file_client = HttpxTelegramFileClient.create(
         resolved_settings.telegram_bot_token
@@ -103,7 +105,17 @@ def build_container(settings: Settings | None = None) -> AppContainer:
     library_service = LibraryService(library_repository)
     meal_log_service = MealLogService(
         nutrition_service=nutrition_service,
+        library_service=library_service,
         repository=meal_log_repository,
+    )
+    audit_service = AuditService(audit_repository)
+    session_service = SessionService(
+        photo_repository=photo_repository,
+        session_repository=session_repository,
+        library_service=library_service,
+        nutrition_service=nutrition_service,
+        meal_log_service=meal_log_service,
+        audit_service=audit_service,
     )
     stats_service = StatsService(stats_repository)
     user_settings_service = UserSettingsService(user_settings_repository)
@@ -112,7 +124,11 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         stats_repository=stats_repository,
         library_repository=library_repository,
     )
-    start_handler = StartCommandHandler(user_service, telegram_client)
+    start_handler = StartCommandHandler(
+        user_service=user_service,
+        user_settings_service=user_settings_service,
+        telegram_client=telegram_client,
+    )
 
     async def close_resources() -> None:
         await telegram_client.close()

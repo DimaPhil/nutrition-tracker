@@ -11,8 +11,21 @@ from nutrition_tracker.services.sessions import SessionRepository
 
 _ACTIVE_STATUSES = {
     "AWAITING_CONFIRMATION",
-    "AWAITING_ITEM_NAME",
-    "AWAITING_ITEM_WEIGHT",
+    "AWAITING_ITEM_LIST",
+    "AWAITING_ITEM_CONFIRMATION",
+    "AWAITING_ITEM_SELECTION",
+    "AWAITING_MANUAL_NAME",
+    "AWAITING_MANUAL_STORE",
+    "AWAITING_MANUAL_BASIS",
+    "AWAITING_MANUAL_SERVING",
+    "AWAITING_MANUAL_MACROS",
+    "AWAITING_PORTION_CHOICE",
+    "AWAITING_MANUAL_GRAMS",
+    "AWAITING_SAVE",
+    "AWAITING_EDIT_CHOICE",
+    "AWAITING_EDIT_GRAMS",
+    "EDIT_SELECT_ITEM",
+    "EDIT_ENTER_GRAMS",
 }
 
 
@@ -23,7 +36,11 @@ class SupabaseSessionRepository(SessionRepository):
     client: Client
 
     def create_session(
-        self, user_id: UUID, photo_id: UUID, status: str, context: dict[str, object]
+        self,
+        user_id: UUID,
+        photo_id: UUID | None,
+        status: str,
+        context: dict[str, object],
     ) -> SessionRecord:
         """Create a session row and return it."""
         response = (
@@ -31,7 +48,7 @@ class SupabaseSessionRepository(SessionRepository):
             .insert(
                 {
                     "user_id": str(user_id),
-                    "photo_id": str(photo_id),
+                    "photo_id": str(photo_id) if photo_id else None,
                     "status": status,
                     "context_json": context,
                 }

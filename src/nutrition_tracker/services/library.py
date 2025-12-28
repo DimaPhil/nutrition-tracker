@@ -20,6 +20,11 @@ class LibraryRepository(Protocol):
     def get_food(self, food_id: UUID) -> LibraryFood | None:
         """Return a food entry by id, if present."""
 
+    def find_by_source_ref(
+        self, user_id: UUID, source_type: str, source_ref: str
+    ) -> LibraryFood | None:
+        """Return a food entry by source reference if present."""
+
     def search_foods(self, user_id: UUID, query: str, limit: int) -> list[LibraryFood]:
         """Search foods by name or alias."""
 
@@ -64,6 +69,12 @@ class LibraryService:
     def record_use(self, food_id: UUID) -> None:
         """Record that a food item has been used."""
         self.repository.increment_usage(food_id, used_at=datetime.now(tz=UTC))
+
+    def find_by_source_ref(
+        self, user_id: UUID, source_type: str, source_ref: str
+    ) -> LibraryFood | None:
+        """Return a food entry matching a source reference."""
+        return self.repository.find_by_source_ref(user_id, source_type, source_ref)
 
     @staticmethod
     def _rank(items: list[LibraryFood]) -> list[LibraryFood]:

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 
 if TYPE_CHECKING:
     from nutrition_tracker.containers import AppContainer
@@ -59,3 +60,57 @@ async def list_costs(request: Request, limit: int = 30) -> dict[str, object]:
     """Return recent model usage entries."""
     container: AppContainer = request.app.state.container
     return {"usage": container.admin_service.list_costs(limit)}
+
+
+@router.get("/ui", response_class=HTMLResponse)
+async def admin_ui() -> HTMLResponse:
+    """Minimal admin UI that consumes the admin API."""
+    return HTMLResponse(_ADMIN_UI_HTML)
+
+
+_ADMIN_UI_HTML = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nutrition Tracker Admin</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 2rem; }
+      h1 { margin-bottom: 0.5rem; }
+      .row { margin-bottom: 1rem; }
+      input { padding: 0.4rem 0.6rem; width: 320px; }
+      button { padding: 0.4rem 0.8rem; margin-right: 0.5rem; }
+      pre { background: #f6f6f6; padding: 1rem; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Nutrition Tracker Admin</h1>
+    <div class="row">
+      <label>Admin token</label><br />
+      <input id="token" type="password" placeholder="X-Admin-Token" />
+    </div>
+    <div class="row">
+      <button onclick="loadEndpoint('/admin/users')">Users</button>
+      <button onclick="loadEndpoint('/admin/sessions')">Sessions</button>
+      <button onclick="loadEndpoint('/admin/costs')">Costs</button>
+    </div>
+    <pre id="output">Ready.</pre>
+    <script>
+      async function loadEndpoint(path) {
+        const token = document.getElementById('token').value;
+        const output = document.getElementById('output');
+        output.textContent = 'Loading...';
+        const res = await fetch(path, {
+          headers: { 'X-Admin-Token': token }
+        });
+        if (!res.ok) {
+          output.textContent = 'Error: ' + res.status;
+          return;
+        }
+        const data = await res.json();
+        output.textContent = JSON.stringify(data, null, 2);
+      }
+    </script>
+  </body>
+</html>
+"""

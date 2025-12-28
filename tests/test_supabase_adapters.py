@@ -170,7 +170,7 @@ def test_supabase_session_repository() -> None:
                 "id": session_id,
                 "user_id": str(uuid4()),
                 "photo_id": photo_id,
-                "status": "ACTIVE",
+                "status": "AWAITING_CONFIRMATION",
                 "context_json": {},
             }
         ],
@@ -196,6 +196,7 @@ def test_supabase_stats_repository() -> None:
         "select",
         [
             {
+                "id": str(uuid4()),
                 "logged_at": datetime.now(tz=UTC).isoformat(),
                 "total_calories": 100,
                 "total_protein_g": 10,
@@ -208,6 +209,7 @@ def test_supabase_stats_repository() -> None:
         "select",
         [
             {
+                "id": str(uuid4()),
                 "logged_at": datetime.now(tz=UTC).isoformat(),
                 "total_calories": 200,
                 "total_protein_g": 20,

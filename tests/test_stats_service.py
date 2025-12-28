@@ -14,6 +14,7 @@ def test_get_today_aggregates_by_timezone() -> None:
     now = datetime.now(tz=UTC)
     repo.logs = [
         MealLogRow(
+            meal_id=uuid4(),
             logged_at=now,
             total_calories=500,
             total_protein_g=30,
@@ -21,6 +22,7 @@ def test_get_today_aggregates_by_timezone() -> None:
             total_carbs_g=50,
         ),
         MealLogRow(
+            meal_id=uuid4(),
             logged_at=now - timedelta(days=1),
             total_calories=200,
             total_protein_g=10,
@@ -42,6 +44,7 @@ def test_get_history_returns_recent() -> None:
     now = datetime.now(tz=UTC)
     repo.logs = [
         MealLogRow(
+            meal_id=uuid4(),
             logged_at=now,
             total_calories=400,
             total_protein_g=20,
@@ -49,6 +52,7 @@ def test_get_history_returns_recent() -> None:
             total_carbs_g=40,
         ),
         MealLogRow(
+            meal_id=uuid4(),
             logged_at=now - timedelta(days=2),
             total_calories=600,
             total_protein_g=40,

@@ -1,35 +1,74 @@
-# Nutrition Tracker
+# Nutrition Tracker (MVP)
 
 Telegram-first nutrition tracking with photo-based food detection and P/F/C macros.
 
-This MVP processes photos only during active sessions and does **not** store images.
+Photos are processed only during active sessions and are **never stored**.
 
-## Highlights
+## What this app does
 
-- Photo -> detected items -> portion workflow -> saved meal
-- USDA FoodData Central (FDC) nutrition lookups with caching
-- User food library with reuse + aliases
-- History commands: `/today`, `/week`, `/month`, `/history`
-- Admin endpoints (token-auth) for user/session/cost summaries
+1. A user sends a food photo to the Telegram bot.
+2. The bot proposes detected items and guesses based on the user’s library.
+3. The user confirms items, chooses products (library → USDA FDC), or enters manually.
+4. The user confirms or enters grams.
+5. The bot shows a macro summary and saves the meal.
+6. The food is added to the user’s library for faster future matches.
 
-## System Overview
+## How it works (high level)
 
-- **API**: FastAPI webhook (`/telegram/webhook`)
+- **Vision**: The image is sent once to an OpenAI model with Structured Outputs to extract item candidates.
+- **Selection**: For each item, the bot suggests:
+  - the best match from the user’s library
+  - fallback FDC results
+  - manual entry (name + macros)
+- **Portions**: Accept estimated grams or enter grams.
+- **Summary**: Per-item macros and totals are shown before saving.
+- **Storage**: Only meal logs and library entries are stored in Supabase Postgres. No images.
+
+## Tech stack
+
+- **Backend**: FastAPI
 - **AI**: OpenAI Responses API (vision + Structured Outputs)
+- **Nutrition DB**: USDA FoodData Central (FDC)
 - **Storage**: Supabase Postgres
-- **UI**: Telegram bot + inline keyboards
+- **Frontend**: Telegram bot with inline keyboards
 
-## Requirements
+## Bot commands (MVP)
 
-- Python 3.13
-- Supabase project (Postgres)
-- Telegram bot token
-- OpenAI API key
-- USDA FDC API key (data.gov)
+- `/start` — create user and set timezone
+- `/today` — totals + meal list
+- `/week` — daily totals + averages
+- `/month` — daily totals + averages
+- `/history` — last 10 meals (tap to view + edit grams)
+- `/library` — top foods + add manual entry
+- `/cancel` — cancel active session
 
-## Environment Variables
+## Setup (step by step)
 
-Create a `.env` file in the repo root:
+### 1) Create a Telegram bot
+
+- Talk to `@BotFather` → create a bot → copy the token.
+
+### 2) Create a Supabase project
+
+- Create a new project in Supabase.
+- Copy:
+  - **Project URL** → `SUPABASE_URL`
+  - **Service Role Key** → `SUPABASE_SERVICE_KEY`
+
+Apply the migration:
+
+```
+psql "<YOUR_SUPABASE_CONNECTION_STRING>" -f supabase/migrations/0001_mvp.sql
+```
+
+### 3) Get API keys
+
+- OpenAI API key → `OPENAI_API_KEY`
+- USDA FoodData Central key (data.gov) → `FDC_API_KEY`
+
+### 4) Configure environment
+
+Create `.env` in the repo root:
 
 ```
 TELEGRAM_BOT_TOKEN=...
@@ -45,72 +84,67 @@ FDC_BASE_URL=https://api.nal.usda.gov/fdc/v1
 ```
 
 Notes:
-- `OPENAI_STORE=false` for privacy.
-- Photos are never stored. Telegram file IDs are removed after session completion.
+- `OPENAI_STORE=false` ensures model responses are not stored by OpenAI.
+- Photos are never stored in Supabase or on disk.
 
-## Local Setup
+### 5) Install and run locally
 
 ```
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-## Run (Local)
-
-```
 uvicorn nutrition_tracker.api.asgi:app --reload
 ```
 
-## Telegram Webhook
+### 6) Set the Telegram webhook
 
-Configure Telegram to send updates to your server:
+Telegram needs a public HTTPS URL. Once you have one:
 
 ```
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-domain>/telegram/webhook
 ```
 
-## Database
+## Admin UI
 
-Supabase migration:
+Open:
 
-- `supabase/migrations/0001_mvp.sql`
+- `GET /admin/ui`
 
-Apply using your Supabase migration workflow.
+You’ll be prompted for your admin token. The UI calls:
 
-## Tests
+- `GET /admin/users`
+- `GET /admin/sessions`
+- `GET /admin/costs`
+
+## How meal logging looks in practice
+
+1. User sends photo.
+2. Bot: “I think I see: rice, chicken… Does this look right?”
+3. User can “Looks right” or “Fix items”.
+4. For each item, user picks:
+   - library match
+   - FDC option
+   - manual entry
+5. Bot asks for grams per item.
+6. Bot shows macro summary and asks to save.
+
+## Quality gates
 
 ```
 pytest
 pytest --cov --cov-report=term-missing
-```
-
-## Quality Gates
-
-```
-pytest
 ruff check src tests
 ruff format --check src tests
 ```
 
-## Admin Endpoints
+## Security & privacy
 
-All admin endpoints require the `X-Admin-Token` header.
-
-- `GET /admin/health`
-- `GET /admin/users`
-- `GET /admin/users/{user_id}`
-- `GET /admin/sessions`
-- `GET /admin/costs`
-
-## Security and Privacy
-
-- Images are not stored (no Supabase Storage usage).
-- Telegram file IDs are deleted after session completion.
-- OpenAI Responses API uses `store=false`.
+- Images are never stored.
+- Telegram file IDs are removed after session completion.
+- OpenAI responses use `store=false`.
 
 ## Troubleshooting
 
-- If you see 401 from `/admin/*`, verify `X-Admin-Token` matches `ADMIN_TOKEN`.
-- If the bot is silent, confirm webhook is set and reachable.
-- If vision fails, ensure `OPENAI_API_KEY` is valid and the model name is correct.
+- **401 on /admin/**: check `X-Admin-Token` matches `ADMIN_TOKEN`.
+- **Bot is silent**: webhook isn’t set or isn’t reachable.
+- **Vision fails**: verify `OPENAI_API_KEY` and model name.

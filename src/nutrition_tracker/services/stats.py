@@ -51,6 +51,20 @@ class StatsService:
         )
         return _aggregate_day(start.date(), logs, tz)
 
+    def get_today_with_logs(
+        self, user_id: UUID, timezone_name: str
+    ) -> tuple[DailyTotals, list[MealLogRow]]:
+        """Return today's totals and meal logs."""
+        tz = ZoneInfo(timezone_name)
+        now = datetime.now(tz=tz)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        logs = self.repository.list_meal_logs(
+            user_id, start.astimezone(UTC), end.astimezone(UTC)
+        )
+        totals = _aggregate_day(start.date(), logs, tz)
+        return totals, logs
+
     def get_week(self, user_id: UUID, timezone_name: str) -> PeriodSummary:
         """Return week-to-date totals and averages."""
         tz = ZoneInfo(timezone_name)
